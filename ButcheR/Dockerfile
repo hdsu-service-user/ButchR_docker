@@ -7,7 +7,7 @@ RUN R -e "devtools::install_github('hdsu-bioquant/bratwurst', ref='dev_hdsu_lite
     
 RUN R -e "BiocManager::install('DESeq2', update = FALSE)"
 RUN R -e "BiocManager::install('gage', update = FALSE)"
-RUN R -e "install.packages('DT')"
+RUN R -e "install.packages('DT', 'shiny', 'viridis')"
 
 
 RUN useradd -ms /bin/bash hdsu
