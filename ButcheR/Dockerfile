@@ -12,14 +12,14 @@ RUN R -e "install.packages('DT')"
 
 RUN useradd -ms /bin/bash hdsu
 
-COPY --chown=hdsu /test_bratwurst/data /home/hdsu/Corces_NMF/data
-COPY --chown=hdsu /test_bratwurst/src /home/hdsu/Corces_NMF/src
-COPY --chown=hdsu /test_bratwurst/db /home/hdsu/Corces_NMF/db
+COPY --chown=hdsu /ButcheR/data /home/hdsu/Corces_NMF/data
+COPY --chown=hdsu /ButcheR/src /home/hdsu/Corces_NMF/src
+COPY --chown=hdsu /ButcheR/db /home/hdsu/Corces_NMF/db
 
-COPY --chown=hdsu /test_bratwurst/user-settings /home/hdsu/.rstudio/monitored/user-settings/user-settings
-COPY --chown=hdsu /test_bratwurst/Rprofile /home/hdsu/.Rprofile
-COPY /test_bratwurst/user-settings /home/rstudio/.rstudio/monitored/user-settings/user-settings
-COPY /test_bratwurst/Rprofile /home/rstudio/.Rprofile
+COPY --chown=hdsu /ButcheR/user-settings /home/hdsu/.rstudio/monitored/user-settings/user-settings
+COPY --chown=hdsu /ButcheR/Rprofile /home/hdsu/.Rprofile
+COPY /ButcheR/user-settings /home/rstudio/.rstudio/monitored/user-settings/user-settings
+COPY /ButcheR/Rprofile /home/rstudio/.Rprofile
 
 # COPY --chown=hdsu data /home/hdsu/Corces_NMF/data
 # COPY --chown=hdsu src /home/hdsu/Corces_NMF/src
