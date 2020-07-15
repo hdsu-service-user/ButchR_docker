@@ -3,7 +3,7 @@ FROM hdsu/r_tensorflow2
 LABEL maintainer="Andres Quintero andres.quintero@bioquant.uni-heidelberg.de"
 
 
-RUN R -e "devtools::install_github('hdsu-bioquant/ButcheR') "
+RUN R -e "devtools::install_github('hdsu-bioquant/ButcheR' )"
     
 RUN R -e "BiocManager::install('DESeq2', update = FALSE)"
 RUN R -e "BiocManager::install('gage', update = FALSE)"
