@@ -10,7 +10,15 @@ RUN R -e "BiocManager::install('DESeq2', update = FALSE)"
 RUN R -e "BiocManager::install('gage', update = FALSE)"
 RUN R -e "install.packages('DT')"
 RUN R -e "install.packages('viridis')"
+
+
+RUN apt-get update && apt-get install -y \
+      libtiff-dev \
+      libxt-dev
+
 RUN R -e "BiocManager::install('ComplexHeatmap', update = FALSE)"
+RUN R -e "BiocManager::install('BiocStyle', update = FALSE)"
+
 
 
 RUN useradd -ms /bin/bash hdsu
