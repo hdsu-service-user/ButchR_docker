@@ -14,51 +14,10 @@ http://localhost:8787/
 `ButchR` is an R package providing functions to perform 
 non-negative matrix factorization and postprocessing using TensorFlow.  
 
+https://github.com/wurst-theke/ButchR
+
 ## Citation 
 Andres Quintero, Daniel Hübschmann, Nils Kurzawa, Sebastian Steinhauser, Philipp Rentzsch, Stephen Krämer, Carolin Andresen, Jeongbin Park, Roland Eils, Matthias Schlesner, Carl Herrmann, [ShinyButchR: interactive NMF-based decomposition workflow of genome-scale datasets](https://doi.org/10.1093/biomethods/bpaa022), Biology Methods and Protocols, bpaa022.
-
-
-## How to install ButchR
-
-### Install TensorFlow  
-
-All the matrix decomposition algorithms implemented in ButchR run using 
-TensorFlow > 2.0.0. Thus, a working installation of TensorFlow is needed to use 
-the package.
-
-There are several ways to install TensorFlow, for example using the R package 
-`tensorflow`:
-
-``` r
-install.packages("tensorflow")
-library(tensorflow)
-install_tensorflow(version = "2.2.0")
-```
-
-Or, if there is a conda environment with TensorFlow installed, it can be 
-activated before loading `ButchR`:
-
-``` r
-# It is important to set the environment before loading reticulate
-reticulate::use_condaenv("tensorflow2env", required = TRUE)
-library(reticulate)
-py_config()
-```
-
-### Install ButchR   
-
-ButchR can be installed by: 
-
-``` r
-remotes::install_github('wurst-theke/ButchR')
-# same as devtools::install_github('wurst-theke/ButchR')
-library(ButchR)
-```
-
-And a pre-build image to run ButchR inside RStudio can be pulled from Docker:
-https://hub.docker.com/r/hdsu/butchr
-
-`docker run --rm -p 8787:8787 -e USER=hdsu -e PASSWORD=pass hdsu/butchr`
 
 
 ## ShinyButchR

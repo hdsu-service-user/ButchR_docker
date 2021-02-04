@@ -76,13 +76,13 @@ Applying Non-Negative Matrix Factorization (NMF) to normalized transcriptome dat
 ##----------------------------------------------------------------------------##
 ##                             run NMF                                        ##
 ##----------------------------------------------------------------------------##
-rna_nmf_exp <- runNMFtensor_lite(X                     = rna_norm_mat,
-                                 ranks                 = factorization_ranks,
-                                 method                = "NMF",
-                                 n_initializations     = 5,
-                                 iterations            = 10^4,
-                                 convergence_threshold = 40, 
-                                 extract_features = TRUE)
+rna_nmf_exp <- run_NMF_tensor(X                     = rna_norm_mat,
+                              ranks                 = factorization_ranks,
+                              method                = "NMF",
+                              n_initializations     = 5,
+                              iterations            = 10^4,
+                              convergence_threshold = 40, 
+                              extract_features = TRUE)
 rna_nmf_exp
 
 ## Normalize NMF
