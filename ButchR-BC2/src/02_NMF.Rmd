@@ -1,0 +1,650 @@
+---
+title: "Corces-Buenrostro AML dataset NMF"
+author: "Health Data Science Unit"
+date: "`r date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: false
+    code_folding: show
+params:
+  work_dir: "~/Corces_NMF"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE, echo=FALSE}
+#this chunk sets global options for Rmarkdown
+knitr::opts_knit$set(root.dir=params$work_dir)
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.table.format="html")
+setwd(params$work_dir)
+library(ButchR)
+library(ggplot2)
+library(viridis)
+library(ComplexHeatmap)
+library(gage)
+
+library(DT)
+library(knitr)
+
+
+##----------------------------------------------------------------------------##
+##                Factorization ranks for all NMFs                            ##
+##----------------------------------------------------------------------------##
+
+factorization_ranks <- 8:10
+```
+
+
+# NMF on Gene expression and Chromatin accessibility data  
+
+
+## Gene expression (RNAseq)
+
+### Data loading
+  
+Read normalized gene expression matrix...
+  
+```{r rna_dataloading, results="asis", message=FALSE}
+##----------------------------------------------------------------------------##
+##                         Read normalized data                               ##
+##----------------------------------------------------------------------------##
+# read normalized matrix
+rna_norm_mat <- readRDS("data/rnaseq/rnaseq_normalized_counts.RDS")
+rna_annotation <- readRDS("data/rnaseq/rnaseq_annotation.RDS")
+
+##----------------------------------------------------------------------------##
+##                          Print dataset dimension                           ##
+##----------------------------------------------------------------------------##
+
+cat("Dimension of transcriptome dataset (RNAseq):  \n\n  ") 
+kable(data.frame(dim(rna_norm_mat), row.names = c("features", "samples")), 
+      col.names = "") 
+
+```
+
+
+### Applying NMF
+
+Applying Non-Negative Matrix Factorization (NMF) to normalized transcriptome data (RNAseq) 
+
+```{r rna_NMF_run, message=FALSE, warning=FALSE, cache=TRUE}
+##----------------------------------------------------------------------------##
+##                             run NMF                                        ##
+##----------------------------------------------------------------------------##
+rna_nmf_exp <- run_NMF_tensor(X                     = rna_norm_mat,
+                              ranks                 = factorization_ranks,
+                              method                = "NMF",
+                              n_initializations     = 5,
+                              iterations            = 10^4,
+                              convergence_threshold = 40, 
+                              extract_features = TRUE)
+rna_nmf_exp
+
+## Normalize NMF
+rna_norm_nmf_exp <- normalizeW(rna_nmf_exp)
+```
+ 
+ 
+### Factorization quality metrics and optimal K
+
+Based on the results of the factorization quality metrics, an optimal number of signatures (k) must be chosen:
+  
+```{r rna_NMF_optK, results='hide',fig.keep='all', message=FALSE, warning=FALSE}
+## Plot K stats
+gg_plotKStats(rna_norm_nmf_exp)
+
+## Generate river plot
+#plot(generateRiverplot(rna_norm_nmf_exp), plot_area=1, yscale=0.6, nodewidth=0.5)
+```
+
+Minize the Frobenius error, the coefficient of variation and the mean Amari distance, while maximizing the sum and mean silhouette width and the cophenic coefficient.
+  
+### H Matrix, W normalized:  {.tabset}  
+  
+  
+```{r rna_Hmatrix_Wnorm, fig.width=8, fig.height=5.5, out.width="90%", results='asis', warning=FALSE, message=FALSE}
+##----------------------------------------------------------------------------##
+##                        H matrix heatmap annotation                         ##
+##----------------------------------------------------------------------------##
+#Annotation for H matrix heatmap
+# Define color vector
+type.colVector <- list(Celltype = setNames(rna_annotation$color[match(levels(rna_annotation$Celltype), rna_annotation$Celltype)],
+         levels(rna_annotation$Celltype))
+)
+
+# Build Heatmap annotation
+heat.anno <- HeatmapAnnotation(df = data.frame(Celltype = rna_annotation$Celltype),
+                               col = type.colVector,
+                               show_annotation_name = TRUE, na_col = "white")
+
+
+##----------------------------------------------------------------------------##
+##              Generate H matrix heatmap, W normalized                       ##
+##----------------------------------------------------------------------------##
+
+
+
+for(ki in factorization_ranks) {
+  cat("\n")
+  cat("  \n#### H matrix for k=",  ki, "  {.tabset}   \n  ")
+  #plot H matrix
+  tmp.hmatrix <- HMatrix(rna_norm_nmf_exp, k = ki)
+  h.heatmap <- Heatmap(tmp.hmatrix,
+                       col = viridis(100),
+                       name = "Exposure",
+                       clustering_distance_columns = 'pearson',
+                       show_column_dend = TRUE,
+                       heatmap_legend_param = 
+                         list(color_bar = "continuous", legend_height=unit(2, "cm")),
+                       top_annotation = heat.anno,
+                       show_column_names = FALSE,
+                       show_row_names = FALSE,
+                       cluster_rows = FALSE)
+  print(h.heatmap)
+  
+  cat("  \n Recovery plots for k=",  ki, "  \n  ")
+  
+  #recovery_plot(tmp.hmatrix, rna_annotation, "Celltype")
+  
+  }
+
+
+
+
+
+
+```
+
+### Gene set enrichment analysis
+
+Using the feature exposure extracted from the W matrix, a gene set enrichment analysis is perform agains all MSigDB terms
+
+The optimal factorization rank selected was: **K = 9**
+
+
+```{r rna_gsea, results="asis", message=FALSE}
+##----------------------------------------------------------------------------##
+##                              W matrix Z scores                             ##
+##----------------------------------------------------------------------------##
+rna_wmatrix <- WMatrix(rna_norm_nmf_exp, k = 9)
+
+#Zscore for each signature
+rna_wmatrix.zscores <- apply(rna_wmatrix, MARGIN=2, function(wmat_score){
+  (wmat_score - median(wmat_score)) / mad(wmat_score)
+})
+colnames(rna_wmatrix.zscores) <- paste0("Signature", 1:9)
+
+
+##----------------------------------------------------------------------------##
+##         GAGE (Generally Applicable Gene-set Enrichment) analysis           ##
+##----------------------------------------------------------------------------##
+#Infer gene sets tha are significantly pertubed relative to all genes considered
+#load precompiled GSEA MSigDB gene sets
+gs.msigDB <- readList("db/msigdb.v6.2.symbols.gmt")
+# head(gs.msigDB)
+
+#run GAGE analysis
+rna_msigDB_enrichment <- gage(rna_wmatrix.zscores, gsets=gs.msigDB, same.dir=TRUE)
+
+#Drop NAs for upregulated
+rna_msigDB_enrichment <- as.data.frame(rna_msigDB_enrichment$greater)
+rna_msigDB_enrichment <- rna_msigDB_enrichment[!is.na(rna_msigDB_enrichment$p.geomean),]
+rna_msigDB_enrichment <- rna_msigDB_enrichment[, paste0("Signature", 1:9)]
+
+# Select only more enriched terms in one signature compared to the others
+idx <- apply(rna_msigDB_enrichment, 1, function(term){
+  term <- -log10(term)
+  # Change 0 to small value to avoid NAs
+  term[term == 0] <- 1e-40
+  # find if this term is more enriched in one signature compared to others
+  is.enrich <- sapply(term, function(x){
+    # p-value 5 times greater than at least 5 other signatures
+    sum(x/term > 5) > 5
+  })
+  any(is.enrich)
+})
+
+rna_msigDB_enrichment <- rna_msigDB_enrichment[idx,]
+
+# Print table
+datatable(rna_msigDB_enrichment, filter="top",
+          extensions = 'Buttons',
+          options = list(dom = 'Bfrtip',
+                         buttons = list(list(extend = 'collection',
+                                             buttons = c('excel', 'csv'),
+                                             text = 'DOWNLOAD DATA')))) %>%
+  formatSignif(columns=colnames(rna_msigDB_enrichment), digits=3)
+
+
+```
+
+
+## Chromatin accessibility (ATACseq)
+
+### Data loading
+  
+Read normalized chromatin accessibility matrix...
+  
+```{r atac_dataloading, results="asis", message=FALSE}
+##----------------------------------------------------------------------------##
+##                         Read normalized data                               ##
+##----------------------------------------------------------------------------##
+# read normalized matrix
+atac_norm_mat <- readRDS("data/atacseq/atacseq_normalized_counts.RDS")
+atac_annotation <- readRDS("data/atacseq/atacseq_annotation.RDS")
+
+##----------------------------------------------------------------------------##
+##                          Print dataset dimension                           ##
+##----------------------------------------------------------------------------##
+
+cat("Dimension of Chromatin accessibility dataset (ATACseq):  \n\n  ") 
+kable(data.frame(dim(atac_norm_mat), row.names = c("features", "samples")), 
+      col.names = "") 
+
+```
+
+
+### Applying NMF
+
+Applying Non-Negative Matrix Factorization (NMF) to normalized Chromatin accessibility data (ATACseq) 
+
+```{r atac_NMF_run, message=FALSE, warning=FALSE, cache=TRUE}
+##----------------------------------------------------------------------------##
+##                             run NMF                                        ##
+##----------------------------------------------------------------------------##
+atac_nmf_exp <- runNMFtensor_lite(X                     = atac_norm_mat,
+                                  ranks                 = factorization_ranks,
+                                  method                = "NMF",
+                                  n_initializations     = 5,
+                                  iterations            = 10^4,
+                                  convergence_threshold = 40, 
+                                  extract_features = FALSE)
+atac_nmf_exp
+
+## Normalize NMF
+atac_norm_nmf_exp <- normalizeW(atac_nmf_exp)
+
+```
+ 
+ 
+### Factorization quality metrics and optimal K
+
+Based on the results of the factorization quality metrics, an optimal number of signatures (k) must be chosen:
+  
+```{r atac_NMF_optK, results='hide',fig.keep='all', message=FALSE, warning=FALSE}
+## Plot K stats
+gg_plotKStats(atac_norm_nmf_exp)
+
+## Generate river plot
+#plot(generateRiverplot(atac_norm_nmf_exp), plot_area=1, yscale=0.6, nodewidth=0.5)
+
+```
+
+Minize the Frobenius error, the coefficient of variation and the mean Amari distance, while maximizing the sum and mean silhouette width and the cophenic coefficient.
+  
+### H Matrix, W normalized:  {.tabset}  
+  
+  
+```{r atac_Hmatrix_Wnorm, fig.width=8, fig.height=5.5, out.width="90%", results='asis', warning=FALSE, message=FALSE}
+##----------------------------------------------------------------------------##
+##                        H matrix heatmap annotation                         ##
+##----------------------------------------------------------------------------##
+#Annotation for H matrix heatmap
+# Define color vector
+type.colVector <- list(Celltype = setNames(atac_annotation$color[match(levels(atac_annotation$Celltype), atac_annotation$Celltype)],
+         levels(atac_annotation$Celltype))
+)
+
+# Build Heatmap annotation
+heat.anno <- HeatmapAnnotation(df = data.frame(Celltype = atac_annotation$Celltype),
+                               col = type.colVector,
+                               show_annotation_name = TRUE, na_col = "white")
+
+
+##----------------------------------------------------------------------------##
+##              Generate H matrix heatmap, W normalized                       ##
+##----------------------------------------------------------------------------##
+for(ki in factorization_ranks) {
+  cat("\n")
+  cat("  \n#### H matrix for k=",  ki, "  {.tabset}   \n  ")
+  #plot H matrix
+  tmp.hmatrix <- HMatrix(atac_norm_nmf_exp, k = ki)
+  h.heatmap <- Heatmap(tmp.hmatrix,
+                       col = viridis(100),
+                       name = "Exposure",
+                       clustering_distance_columns = 'pearson',
+                       show_column_dend = TRUE,
+                       heatmap_legend_param = 
+                         list(color_bar = "continuous", legend_height=unit(2, "cm")),
+                       top_annotation = heat.anno,
+                       show_column_names = FALSE,
+                       show_row_names = FALSE,
+                       cluster_rows = FALSE)
+  print(h.heatmap)
+  
+  cat("  \n Recovery plots for k=",  ki, "  \n  ")
+  
+  #recovery_plot(tmp.hmatrix, atac_annotation, "Celltype")
+  
+  }
+
+
+gc()
+```
+
+
+## Integrative RNAseq & ATACseq
+
+**Gene expression (RNAseq) & Chromatin accessibility (ATACseq)**
+
+Only the those samples with RNAseq and ATACseq data were used in the integrative analysis.
+
+### Data loading
+  
+Read normalized gene expression matrix and chromatin accessibility matrix...
+  
+```{r integrative_dataloading, results="asis", message=FALSE}
+##----------------------------------------------------------------------------##
+##                         Read normalized data                               ##
+##----------------------------------------------------------------------------##
+# read normalized matrix
+int_norm_mat <- readRDS("data/multiview/multiview_norm_mat_list.RDS")
+int_annotation <- readRDS("data/multiview/multiview_annotation.RDS")
+
+##----------------------------------------------------------------------------##
+##                          Print dataset dimension                           ##
+##----------------------------------------------------------------------------##
+cat("Dimension of transcriptome dataset (RNAseq):  \n\n  ") 
+kable(data.frame(dim(int_norm_mat$rna), row.names = c("features", "samples")), 
+      col.names = "") 
+
+cat("Dimension of Chromatin accessibility dataset (ATACseq):  \n\n  ") 
+kable(data.frame(dim(int_norm_mat$atac), row.names = c("features", "samples")), 
+      col.names = "") 
+
+```
+
+### integrative NMF Lambda tuning
+
+In iNMF the lambda parameter controls if the factorization should shift towards extracting more homogeneous effect or heterogeneous effect.
+
+Based on Yang and Michailidis, 2016, 
+to tune the value of the parameter lambda for the integrative NMF (iNMF),
+the objectives values of join NMF (jNMF) are compared to
+single view NMFs (sNMF), the principle is that join NMF
+represents complete homogeneity and single view NMF
+represents complete heterogeneity.
+
+To avoid overfitting the best lambda can be selected by plotting
+the difference of the unsquared residual quantities of
+jNMF and iNMF (Ri - Rj) over multiple values of lambda,
+and compare it to the difference of the unsquared residual quantities of
+sNMF and jNMF c*(Rj - Rs).
+The optimal lambda usually is the first lambda in which
+(Ri - Rj) < c*(Rj - Rs).
+Where c is a constant >= 2.
+
+For more Help please run *?iNMF_lambda_tuning.*
+
+The following function helps to select the optimal lamba for a fixed factorization rank (K = 9).
+
+```{r iNMF_tune, message=FALSE, warning=FALSE, cache=TRUE}
+##----------------------------------------------------------------------------##
+##                             Run integrative NMF                            ##
+##----------------------------------------------------------------------------##
+iNMF_lambda_tuning(matrix_list           = int_norm_mat,
+                   lambdas               = seq(0, 1, 0.1),
+                   thr_cons              = 4,
+                   Output_type           = "residuals",
+                   rank                  = 9,
+                   n_initializations     = 1,
+                   iterations            = 10^4,
+                   convergence_threshold = 40)
+```
+ 
+According to the figure, the optimal lamba should be between 0.1 and 0.3
+
+### Applying integrative NMF
+
+Applying Integrative Non-Negative Matrix Factorization (NMF) to normalized Gene expression (RNAseq) and  Chromatin accessibility data (ATACseq) 
+
+
+```{r iNMF_run, message=FALSE, warning=FALSE, cache=TRUE}
+##----------------------------------------------------------------------------##
+##                             Run integrative NMF                            ##
+##----------------------------------------------------------------------------##
+inmf_exp <- run_iNMF_tensor(matrix_list           = int_norm_mat,
+                            ranks                 = factorization_ranks,
+                            n_initializations     = 5,
+                            iterations            = 10^4,
+                            convergence_threshold = 40,
+                            Sp                    = 0,
+                            lamb                  = 0.1,
+                            extract_features      = FALSE)
+inmf_exp
+```
+ 
+ 
+### Factorization quality metrics and optimal K  
+
+Based on the results of the factorization quality metrics, an optimal number of signatures (k) must be chosen:
+
+```{r iNMF_optK, results='hide',fig.keep='all', message=FALSE, warning=FALSE}
+## Plot K stats
+gg_plotKStats(inmf_exp)
+
+```
+
+Minize the Frobenius error, the coefficient of variation and the mean Amari distance, while maximizing the sum and mean silhouette width and the cophenic coefficient.
+  
+### H Matrices:  {.tabset}  
+  
+```{r iNMF_Hmatrix, fig.width=12, fig.height=4, out.width="90%", results='asis', warning=FALSE, message=FALSE}
+##----------------------------------------------------------------------------##
+##                    Plot H matrix heatmap integrative NMF                   ##
+##----------------------------------------------------------------------------##
+
+
+plotH_oneView <- function(int_nmf, viewID, k, heat.anno, main_hist, col=viridis(100), 
+                          scale_color=TRUE, displayID = viewID){
+  
+  sharedH <- HMatrix(int_nmf, k = k, type = "shared")
+  Hview   <- HMatrix(int_nmf, k = k, type = "viewspec", view_id = viewID)
+    
+  
+  # hs   <- HMatrix(inmf_exp, k = ki, type = "shared")
+  # hv_r <- HMatrix(inmf_exp, k = ki, type = "viewspec", view_id = "rna")
+  # hv_a <- HMatrix(inmf_exp, k = ki, type = "viewspec", view_id = "atac")
+  
+  # Define total H matrix
+  totalH <- sharedH + Hview
+  # Color Function
+  if (scale_color) {
+    colf <- circlize::colorRamp2(seq(0, max(totalH), length.out = 100), col)
+  } else {
+    colf <- col
+  }
+  
+  #main_hist <- hclust(as.dist(1 - cor(totalH, method = "pearson")))
+  
+  tH.heatmap <- Heatmap(totalH,
+                        col = colf,
+                        name = "Total Exposure",
+                        column_title = "Total H matrix",
+                        cluster_columns = main_hist,
+                        show_column_dend = TRUE,
+                        top_annotation = heat.anno, 
+                        show_column_names = FALSE,
+                        show_row_names = FALSE,
+                        cluster_rows = FALSE)
+  
+  sH.heatmap <- Heatmap(sharedH,
+                        col = colf,
+                        name = "Shared Exposure",
+                        column_title = "Shared H matrix",
+                        cluster_columns = main_hist,
+                        show_column_dend = TRUE,
+                        top_annotation = heat.anno,
+                        show_column_names = FALSE,
+                        show_row_names = FALSE,
+                        cluster_rows = FALSE)
+  
+  vH.heatmap <- Heatmap(Hview,
+                        col = colf,
+                        name = "View Specific Exposure",
+                        column_title = "View specific H matrix",
+                        cluster_columns = main_hist,
+                        show_column_dend = TRUE,
+                        top_annotation = heat.anno,
+                        show_column_names = FALSE,
+                        show_row_names = FALSE,
+                        cluster_rows = FALSE)
+  #print(tH.heatmap + sH.heatmap + vH.heatmap)
+  # stiff_cor_heat <- as_ggplot(grid.grabExpr(draw(stiff_cor_heat)))
+  # stiff_cor_heat
+  
+  #ht_global_opt(heatmap_legend_grid_height = unit(.25, "cm"))
+  ht_list <- tH.heatmap + sH.heatmap + vH.heatmap
+  draw(ht_list, row_title = displayID)
+  ht_global_opt(RESET = TRUE)
+}
+
+
+##----------------------------------------------------------------------------##
+##                        H matrix heatmap annotation                         ##
+##----------------------------------------------------------------------------##
+#Annotation for H matrix heatmap
+# Define color vector
+type.colVector <- list(Celltype = setNames(int_annotation$color[match(levels(int_annotation$Celltype), int_annotation$Celltype)],
+         levels(int_annotation$Celltype))
+)
+
+# Build Heatmap annotation
+heat.anno <- HeatmapAnnotation(df = data.frame(Celltype = int_annotation$Celltype),
+                               col = type.colVector,
+                               show_annotation_name = FALSE, na_col = "white")
+
+
+my_Heatmap <- function(my_h, heat.anno, matrix_id){
+  hm <- Heatmap(my_h,
+                col = viridis(100),
+                name = matrix_id,
+                column_title = matrix_id,
+                cluster_columns = main_hist,
+                        show_column_dend = TRUE,
+                        top_annotation = heat.anno, 
+                        show_column_names = FALSE,
+                        show_row_names = FALSE,
+                        cluster_rows = FALSE)
+
+}
+
+
+##----------------------------------------------------------------------------##
+##              Generate H matrix heatmap, W normalized                       ##
+##----------------------------------------------------------------------------##
+for(ki in factorization_ranks) {
+  cat("\n")
+  #cat("  \n#### H matrix for k=",  ki, "  {.tabset}   \n  ")
+  cat("  \n#### H matrix for k=",  ki, "  {.tabset}    \n  ")
+  #plot H matrix
+  cat("\n")
+  cat("  \n##### not scaled  \n  ")
+  
+  
+  sharedH <- HMatrix(inmf_exp, k = ki, type = "shared")
+  main_hist <- hclust(as.dist(1 - cor(sharedH, method = "pearson")))
+  
+  
+  
+  
+  plotH_oneView(inmf_exp, k = ki, heat.anno = heat.anno, main_hist = main_hist, 
+                scale_color = FALSE, viewID = "rna", displayID = "RNAseq")
+  plotH_oneView(inmf_exp, k = ki, heat.anno = heat.anno, main_hist = main_hist, 
+                scale_color = FALSE, viewID = "atac", displayID = "ATACseq")
+  
+  cat("\n")
+  cat("  \n##### scaled  \n  ")
+  plotH_oneView(inmf_exp, k = ki, heat.anno = heat.anno, main_hist = main_hist, 
+                scale_color = TRUE, viewID = "rna", displayID = "RNAseq")
+  plotH_oneView(inmf_exp, k = ki, heat.anno = heat.anno, main_hist = main_hist, 
+                scale_color = TRUE, viewID = "atac", displayID = "ATACseq")
+  
+  
+  }
+
+
+
+```
+
+### Gene set enrichment analysis
+
+Using the feature exposure extracted from the W matrix, a gene set enrichment analysis is perform agains all MSigDB terms
+
+The optimal factorization rank selected was: **K = 9**
+
+
+```{r iNMF_gsea, results="asis", message=FALSE, warning=FALSE}
+##----------------------------------------------------------------------------##
+##                              W matrix Z scores                             ##
+##----------------------------------------------------------------------------##
+int_rna_wmatrix <- WMatrix(inmf_exp, k = 9, view_id = "rna",)
+
+#Zscore for each signature
+int_rna_wmatrix.zscores <- apply(int_rna_wmatrix, MARGIN=2, function(wmat_score){
+  (wmat_score - median(wmat_score)) / mad(wmat_score)
+})
+colnames(int_rna_wmatrix.zscores) <- paste0("Signature", 1:9)
+
+
+##----------------------------------------------------------------------------##
+##         GAGE (Generally Applicable Gene-set Enrichment) analysis           ##
+##----------------------------------------------------------------------------##
+#Infer gene sets tha are significantly pertubed relative to all genes considered
+#load precompiled GSEA MSigDB gene sets
+gs.msigDB <- readList("db/msigdb.v6.2.symbols.gmt")
+# head(gs.msigDB)
+
+#run GAGE analysis
+int_rna_msigDB_enrichment <- gage(int_rna_wmatrix.zscores, gsets=gs.msigDB, same.dir=TRUE)
+
+#Drop NAs for upregulated
+int_rna_msigDB_enrichment <- as.data.frame(int_rna_msigDB_enrichment$greater)
+int_rna_msigDB_enrichment <- int_rna_msigDB_enrichment[!is.na(int_rna_msigDB_enrichment$p.geomean),]
+int_rna_msigDB_enrichment <- int_rna_msigDB_enrichment[, paste0("Signature", 1:9)]
+
+# Select only more enriched terms in one signature compared to the others
+idx <- apply(int_rna_msigDB_enrichment, 1, function(term){
+  term[term == 0] <- 1e-40
+  term <- -log10(term)
+  # Change 0 to small value to avoid NAs
+  # find if this term is more enriched in one signature compared to others
+  is.enrich <- sapply(term, function(x){
+    # p-value 5 times greater than at least 5 other signatures
+    sum(x/term > 5) > 5
+  })
+  any(is.enrich)
+})
+
+# table(idx)
+# head(idx)
+# head(int_rna_msigDB_enrichment)
+int_rna_msigDB_enrichmentf <- int_rna_msigDB_enrichment[idx,]
+
+# Print table
+datatable(int_rna_msigDB_enrichmentf, filter="top",
+          extensions = 'Buttons',
+          options = list(dom = 'Bfrtip',
+                         buttons = list(list(extend = 'collection',
+                                             buttons = c('excel', 'csv'),
+                                             text = 'DOWNLOAD DATA')))) %>%
+  formatSignif(columns=colnames(int_rna_msigDB_enrichment), digits=3)
+
+
+```
+
